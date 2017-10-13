@@ -1,4 +1,4 @@
-import os.path
+import sys, os.path
 import tensorflow as tf
 import helper
 import warnings
@@ -10,9 +10,9 @@ assert LooseVersion(tf.__version__) >= LooseVersion('1.0'), 'Please use TensorFl
 
 FLAGS = tf.flags.FLAGS
 tf.flags.DEFINE_string('mode', "train", "Mode train/test")
-tf.flags.DEFINE_integer("epochs", "5000", "Number of epochs to run the optimizer")
-tf.flags.DEFINE_integer("batch_size", "50", "batch size for training")
-tf.flags.DEFINE_float("learning_rate", "0.0001", "Learning rate for Adam Optimizer")
+tf.flags.DEFINE_integer("epochs", "20", "Number of epochs to run the optimizer")
+tf.flags.DEFINE_integer("batch_size", "2", "batch size for training")
+tf.flags.DEFINE_float("learning_rate", "0.00001", "Learning rate for Adam Optimizer")
 tf.flags.DEFINE_string("logs_dir", "./logs/", "path to logs directory")
 tf.flags.DEFINE_string("data_dir", "./data/", "path to dataset")
 tf.flags.DEFINE_string("runs_dir", "./runs/", "path to store output files")
@@ -74,28 +74,15 @@ def layers(vgg_layer3_out, vgg_layer4_out, vgg_layer7_out, num_classes):
     :param num_classes: Number of classes to classify
     :return: The Tensor for the last layer of output
     """
-    x = vgg_layer4_out;
+    x = vgg_layer7_out;
 
-    x = tf.layers.conv2d(x, 512, (3,3), (1,1), padding='same', name='conv_5_1')
-    x = tf.layers.conv2d(x, 512, (3,3), (1,1), padding='same', name='conv_5_2')
-    x = tf.layers.conv2d(x, 512, (3,3), (1,1), padding='same', name='conv_5_3')
-    x = tf.layers.average_pooling2d(x, (2,2), (2,2), padding='same', name='pool_5')
-    x = tf.layers.conv2d(x, 4096, (2,2), (1,1), padding='same', name='conv_d5_1')
-    x = tf.layers.conv2d(x, 4096, (1,1), (1,1), padding='same', name='conv_d5_2')
-    x = tf.layers.conv2d_transpose(x, 512, [3,3], [1,1], padding='same', name='conv_d4_1')
-    x = tf.layers.conv2d_transpose(x, 512, [3,3], [1,1], padding='same', name='conv_d4_2')
-    x = tf.layers.conv2d_transpose(x, 512, [3,3], [2,2], padding='same', name='conv_d4_3')
+    x = tf.layers.conv2d_transpose(x, 512, [3,3], [2,2], padding='same', kernel_initializer=tf.contrib.layers.xavier_initializer(), name='conv_d4')
     x = tf.add(x, vgg_layer4_out, name="fuse_i1")
-    x = tf.layers.conv2d_transpose(x, 256, [3,3], [1,1], padding='same', name='conv_d3_1')
-    x = tf.layers.conv2d_transpose(x, 256, [3,3], [1,1], padding='same', name='conv_d3_2')
-    x = tf.layers.conv2d_transpose(x, 256, [3,3], [2,2], padding='same', name='conv_d3_3')
+    x = tf.layers.conv2d_transpose(x, 256, [3,3], [2,2], padding='same', kernel_initializer=tf.contrib.layers.xavier_initializer(), name='conv_d3')
     x = tf.add(x, vgg_layer3_out, name="fuse_i2")
-    x = tf.layers.conv2d_transpose(x, 128, [3,3], [1,1], padding='same', name='conv_d2_1')
-    x = tf.layers.conv2d_transpose(x, 128, [3,3], [1,1], padding='same', name='conv_d2_2')
-    x = tf.layers.conv2d_transpose(x, 128, [3,3], [2,2], padding='same', name='conv_d2_3')
-    x = tf.layers.conv2d_transpose(x, 64, [3,3], [1,1], padding='same', name='conv_d1_1')
-    x = tf.layers.conv2d_transpose(x, 64, [3,3], [2,2], padding='same', name='conv_d1_2')
-    x = tf.layers.conv2d_transpose(x, 2, [3,3], [2,2], padding='same', name='conv_d0_1')
+    x = tf.layers.conv2d_transpose(x, 128, [3,3], [2,2], padding='same', kernel_initializer=tf.contrib.layers.xavier_initializer(), name='conv_d2')
+    x = tf.layers.conv2d_transpose(x, 64, [3,3], [2,2], padding='same', kernel_initializer=tf.contrib.layers.xavier_initializer(), name='conv_d1')
+    x = tf.layers.conv2d_transpose(x, num_classes, [3,3], [2,2], padding='same', kernel_initializer=tf.contrib.layers.xavier_initializer(), name='conv_d0')
 
     DISPLAY_LAYERS = False
     if DISPLAY_LAYERS:
@@ -109,7 +96,6 @@ def layers(vgg_layer3_out, vgg_layer4_out, vgg_layer7_out, num_classes):
             print ("\n")
 
     return x
-
 tests.test_layers(layers)
 
 
@@ -152,6 +138,7 @@ def train_nn(sess, epochs, batch_size, get_batches_fn, train_op, cross_entropy_l
     num_classes = 2
     for epoch in range(epochs):
         n_batch = 0
+        max_cel = 0.0
         for batch_xs, batch_ys in get_batches_fn(batch_size):
             #iou, iou_op = tf.metrics.mean_iou(out_layer, correct_label, num_classes)
             #print (sess.run(iou_op))
@@ -162,10 +149,14 @@ def train_nn(sess, epochs, batch_size, get_batches_fn, train_op, cross_entropy_l
                                                                            keep_prob: 0.7,
                                                                            learning_rate: FLAGS.learning_rate})
                 print ("Epoch: {}, Batch: {}, Cross entropy loss: {}".format(epoch, n_batch, cel))
-                if(cel <= 0.01):
-                    return True
+                if cel > max_cel:
+                    max_cel = cel
             #else:
             #    print("Skip files: ", batch_ys.shape[0])
+
+        # Early exit of loss is acceptable
+        if(max_cel <= 0.005):
+            return True
     
     return False
 tests.test_train_nn(train_nn)
@@ -221,10 +212,13 @@ def run():
         if FLAGS.mode == 'train':
             print ("Train mode");
             # Train NN using the train_nn function
-            success_flag = train_nn(sess, FLAGS.epochs, FLAGS.batch_size, get_batches_fn, train_op, cross_entropy_loss, image_input,
+            save_flag = train_nn(sess, FLAGS.epochs, FLAGS.batch_size, get_batches_fn, train_op, cross_entropy_loss, image_input,
                                     correct_label, keep_prob, learning_rate)
- 
-            if success_flag:
+
+            if len(sys.argv) > 1 and "save" in sys.argv[1]:
+                save_flag = True
+
+            if save_flag:
                 saver.save(sess, FLAGS.checkpoint_dir + 'model.ckpt', global_step=1)
 
         # Save inference data using helper.save_inference_samples
